@@ -1,0 +1,230 @@
+#!/usr/bin/python
+
+import json
+from time import strftime, localtime
+from os import fstat, makedirs, getenv
+from os.path import dirname, expanduser, dirname
+from sys import stderr, argv
+from time import time
+# python2 issues
+try: from urllib.request import urlopen
+except ImportError: from urllib import urlopen
+
+HOME = expanduser("~")
+CONFDIR = getenv("XDG_CONFIG_DIR", HOME + "/.config")
+CACHEDIR = getenv("XDG_CACHE_DIR", HOME + "/.cache")
+
+CONFIG = CONFDIR + "/owm.json"
+LCACHE = CACHEDIR + "/owm/location.json"
+DCACHE = CACHEDIR + "/owm/%i.json"
+
+nocache = False
+numdays = None
+sethome = False
+
+def help():
+	print("OpenWeatherMap forecast fetching and format")
+	print("Usage:")
+	print("	owmf [-s] [-c] [-12345] [location]")
+	print("")
+	print("Options:")
+	print("	-1	show 1 day forecast (same with -2, -3 etc)")
+	print("	-s	set given location as \"home\"")
+	print("	-c	ignore cached results, force request")
+	print("")
+	print("Location should be something like \"London,GB\" or \"Montreal\"")
+	print("When not specified, home location is used")
+	print("")
+	print("Output format description:")
+	print("	14    +1  sky is clear      SE >>>>> >")
+	print("around 14:00 temperature +1C, clear sky, wind from South-East 6 m/s")
+
+def die(message):
+	stderr.write(message)
+	exit(-1)
+
+def fmtwind(s, d):
+        sr = int(round(s))
+        if sr < 1:
+                return '--'
+
+        dirs = [ 'NN', 'NE', 'EE', 'SE', 'SS', 'SW', 'WW', 'NW' ]
+        wd = dirs[int(round(d/45))%4]
+
+        ww = '>' * sr
+        wn = 5
+        ww = " ".join([ww[i:i+wn] for i in range(0, sr, wn)])
+
+        return "%2s %s" % (wd, ww)
+
+# Output is formed as a list-of-lists structure, then formatted
+# to align columns and printed out row-by-row.
+
+# Convert single raw data point into output row
+def makewrow(r):
+	ltdt = localtime(r['dt'])
+	return [
+		strftime("%Y-%m-%d %a", ltdt),			# date
+		strftime("%H", ltdt),				# time
+		"%+3.0f" % (r['main']['temp'] - 273.15),	# temperature
+		r['weather'][0]['description'],			# clear/cloudy
+		fmtwind(r['wind']['speed'], r['wind']['deg'])	# wind
+	]
+
+# Convert raw data into complete output table
+def makewlist(data):
+	if not len(data):
+		return data
+	if not numdays:
+		return list(map(makewrow, data['list']))
+
+	dt0 = data['list'][0]['dt']
+	mdt = numdays * 24*60*60
+	return [ makewrow(r) for r in data['list'] if r['dt'] - dt0 <= mdt ]
+
+# Pretty-print output table, aligning columns based on max cell width
+def printwlist(city, rows):
+	print("%s, %s" % (city['name'], city['country']))
+	print("")
+
+	if len(rows) <= 0:
+		print("No weather to show")
+		exit(0)
+
+	cwidth = [ 0 ] * len(rows[0])
+	for r in rows:
+		for (i, s) in enumerate(r):
+			cwidth[i] = max(cwidth[i], len(s))
+
+	day = ''
+	for r in rows:
+		if day != r[0]:
+			day = r[0]
+			print(day)
+		print("    %s   %*s  %-*s  %s" % (r[1], cwidth[2], r[2], cwidth[3], r[3], r[4]))
+
+
+# Topmost entry point for obtaining data, uses both location and data caches.
+# loc is something like "Donetsk,UA"
+# Returns raw json data as a string
+def fetchlocation(loc):
+	lochash = readlhash()
+	if loc in lochash:
+		return fetchbyid(lochash[loc])
+
+	data = fetchbyloc(loc)
+	if not data or 'city' not in data:
+		die("OWN has no data for " + loc)
+
+	locid = data['city']['id']
+	lochash[loc] = int(locid)
+	savelhash(lochash)
+
+	return data
+
+def readlhash():
+	try:
+		return json.loads(open(LCACHE).read())
+	except FileNotFoundError:
+		return { }
+	except:
+		raise
+
+def savelhash(lochash):
+	makedirs(dirname(LCACHE), exist_ok=True)
+	with open(LCACHE, "w") as fh:
+		fh.write(json.dumps(lochash))
+
+def savewdata(locid, data):
+	cached = DCACHE % locid
+	makedirs(dirname(cached), exist_ok=True)
+	with open(cached, "w") as fh:
+		fh.write(data)
+
+def readwdata(locid):
+	cached = DCACHE % locid
+	fh = open(cached)
+	st = fstat(fh.fileno())
+	if(st.st_mtime < time() - 6*60*60):
+		raise FileNotFoundError
+	return json.loads(fh.read())
+
+# Issue a GET request to the server; q is either "id=N" or "q=Location,CC"
+def fetchforecast(rq):
+	try:
+		url = "http://api.openweathermap.org/data/2.5/forecast?%s" % rq
+		data = urlopen(url).read().decode('utf-8')
+		ddec = json.loads(data)
+	except:
+		die("Can't load %s" % url)
+
+	if 'city' in ddec and 'id' in ddec['city']:
+		# ddec.city.id can be both 123 *and* '123' in ddec
+		savewdata(int(ddec['city']['id']), data)
+
+	return ddec
+
+# Try data cache first, and do request only if no usable
+# cached forecast was found
+def fetchbyid(locid):
+	if nocache:
+		return fetchforecast("id=%i" % locid)
+	try:
+		return readwdata(locid)
+	except FileNotFoundError:
+		return fetchforecast("id=%i" % locid)
+
+# Assuming id for loc is not know, proceed with a search query
+def fetchbyloc(loc):
+	return fetchforecast("q=%s" % loc)
+
+def readconfig():
+	try:
+		return json.loads(open(CONFIG).read())
+	except FileNotFoundError:
+		return { }
+
+def saveconfig(c):
+	makedirs(dirname(CONFIG), exist_ok=True)
+	with open(CONFIG, "w") as fh:
+		fh.write(json.dumps(c))
+
+# --*---
+
+# argparse is ugly and can't handle -1, -2, -3 etc stuff well
+args = argv[1:]
+location = None
+for (i, a) in enumerate(args):
+	if a[0] != '-':
+		location = a
+		break
+	elif a in [ '-1', '-2', '-3', '-4', '-5' ]:
+		numdays = int(a[1:])
+	elif a == '-s':
+		sethome = True
+	elif a == '-c':
+		nocache = True
+	elif a == '-h':
+		help()
+		exit(0)
+	else:
+		die("Unknown option %s" % opt)
+	
+config = readconfig()
+if 'days' in config and numdays is None:
+	numdays = config['days']
+
+if location != None:
+	data = fetchlocation(location)
+elif 'id' in config:
+	data = fetchbyid(config['id'])
+else:
+	die("Specify location to show")
+
+if sethome or 'id' not in config:
+	config['id'] = data['city']['id']
+	if numdays is not None:
+		config['days'] = numdays
+	saveconfig(config)
+
+printwlist(data['city'], makewlist(data))
