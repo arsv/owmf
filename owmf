@@ -40,7 +40,7 @@ def help():
 	print("around 14:00 temperature +1C, clear sky, wind from South-East 6 m/s")
 
 def die(message):
-	stderr.write(message)
+	stderr.write(message + "\n")
 	exit(-1)
 
 def fmtwind(s, d):
@@ -208,7 +208,7 @@ for (i, a) in enumerate(args):
 		help()
 		exit(0)
 	else:
-		die("Unknown option %s" % opt)
+		die("Unknown option %s" % a)
 	
 config = readconfig()
 if 'days' in config and numdays is None:
