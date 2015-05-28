@@ -6,6 +6,7 @@ from os import fstat, makedirs, getenv
 from os.path import dirname, expanduser, dirname
 from sys import stderr, argv
 from time import time
+from datetime import datetime
 # python2 issues
 try: from urllib.request import urlopen
 except ImportError: from urllib import urlopen
@@ -84,7 +85,11 @@ def makewlist(data):
 
 # Pretty-print output table, aligning columns based on max cell width
 def printwlist(city, rows):
-	print("%s, %s" % (city['name'], city['country']))
+	if 'cached' in city:
+		cached = datetime.fromtimestamp(city['cached']).strftime(' (%Y-%m-%d %H:%M)')
+	else:
+		cached = ''
+	print("[%s] %s, %s%s" % (city['id'], city['name'], city['country'], cached))
 	print("")
 
 	if len(rows) <= 0:
@@ -147,7 +152,10 @@ def readwdata(locid):
 	st = fstat(fh.fileno())
 	if(st.st_mtime < time() - 6*60*60):
 		raise FileNotFoundError
-	return json.loads(fh.read())
+	data = json.loads(fh.read())
+	if 'city' in data:
+		data['city']['cached'] = st.st_mtime
+	return data
 
 # Issue a GET request to the server; q is either "id=N" or "q=Location,CC"
 def fetchforecast(rq):
