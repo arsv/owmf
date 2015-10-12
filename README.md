@@ -20,3 +20,12 @@ Lviv, UA
 The script should work both with Python 2 and Python 3.
 
 Inspired by https://github.com/HalosGhost/shaman
+
+Note starting from Oct 2015 OWM _requires_ valid API key for any request.
+To get API key, register at http://home.openweathermap.org/users/sign_up,
+take the key from your profile page http://home.openweathermap.org/ and
+run owmf once with -s and +KEY arguments:
+
+    owmf +00000000000000000000000000000000 -s [your-city]
+
+The key will be saved in ~/.config/owm.json. Further calls need no +KEY.

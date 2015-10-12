@@ -19,6 +19,7 @@ CONFIG = CONFDIR + "/owm.json"
 LCACHE = CACHEDIR + "/owm/location.json"
 DCACHE = CACHEDIR + "/owm/%i.json"
 
+apikey = None
 nocache = False
 numdays = None
 sethome = False
@@ -26,7 +27,7 @@ sethome = False
 def help():
 	print("OpenWeatherMap forecast fetching and format")
 	print("Usage:")
-	print("	owmf [-s] [-c] [-12345] [location]")
+	print("	owmf [+APIKEY] [-s] [-c] [-12345] [location]")
 	print("")
 	print("Options:")
 	print("	-1	show 1 day forecast (same with -2, -3 etc)")
@@ -160,6 +161,7 @@ def readwdata(locid):
 # Issue a GET request to the server; q is either "id=N" or "q=Location,CC"
 def fetchforecast(rq):
 	try:
+		rq += '&APPID=' + apikey
 		url = "http://api.openweathermap.org/data/2.5/forecast?%s" % rq
 		data = urlopen(url).read().decode('utf-8')
 		ddec = json.loads(data)
@@ -203,7 +205,9 @@ def saveconfig(c):
 args = argv[1:]
 location = None
 for (i, a) in enumerate(args):
-	if a[0] != '-':
+	if a[0] == '+':
+		apikey = a[1:]
+	elif a[0] != '-':
 		location = a
 		break
 	elif a in [ '-1', '-2', '-3', '-4', '-5' ]:
@@ -221,6 +225,10 @@ for (i, a) in enumerate(args):
 config = readconfig()
 if 'days' in config and numdays is None:
 	numdays = config['days']
+if 'apikey' in config and apikey is None:
+	apikey = config['apikey']
+elif apikey is None:
+	die("No API key set")
 
 if location != None:
 	data = fetchlocation(location)
@@ -231,6 +239,7 @@ else:
 
 if sethome or 'id' not in config:
 	config['id'] = data['city']['id']
+	config['apikey'] = apikey
 	if numdays is not None:
 		config['days'] = numdays
 	saveconfig(config)
